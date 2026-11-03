@@ -35,8 +35,8 @@
 #define BLINK_TIME_OFF_STATUS_NORMAL 200
 #define BLINK_TIME_ON_STATUS_ERROR 250
 #define BLINK_TIME_OFF_STATUS_ERROR 200
-#define BLINK_TIME_ON_STATUS_CONNECTION_LOST 50
-#define BLINK_TIME_OFF_STATUS_CONNECTION_LOST 200
+#define BLINK_TIME_ON_STATUS_CONNECTION_LOST 100
+#define BLINK_TIME_OFF_STATUS_CONNECTION_LOST 100
 #define MAX_ERROR_BLINKS 3
 #define BLINK_PERIOD 1000
 
@@ -47,6 +47,7 @@ static const char *TAG = "geyser_controller";
 int32_t status_blink(gpio_num_t led_pin, int status);
 void wifi_init_sta(void);
 int is_wifi_connected(void);
+int try_wifi_reconnect(void);
 /****************************************************
 ************** App Main Starts Here ***************
 ****************************************************/
@@ -77,8 +78,8 @@ void app_main(void)
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
 
@@ -157,15 +158,17 @@ void app_main(void)
             }
             btn_pressed = 0; // Reset button pressed state after handling
         }
-         uint64_t ms_since_boot = esp_timer_get_time() / 1000;
-        if(is_wifi_connected() == 0 && status==STATUS_NORMAL)
+        uint64_t ms_since_boot = esp_timer_get_time() / 1000;
+        // detect wifi disconnect but let the Error State take precedence
+        if (is_wifi_connected() == 0 && status != STATUS_ERROR)
         {
             if(ms_since_boot- last_debug_msg_time >= 1000) // Log every 5 seconds
             {
                 ESP_LOGI(TAG, "WiFi connection lost.");
                 last_debug_msg_time = ms_since_boot;
+                try_wifi_reconnect();
             }
-            // status = STATUS_CONNECTION_LOST;
+            status = STATUS_CONNECTION_LOST;
         }
         else if(status!=STATUS_ERROR){
             if(ms_since_boot- last_debug_msg_time >= 5000) // Log every 5 seconds
@@ -173,9 +176,9 @@ void app_main(void)
                 ESP_LOGI(TAG, "WiFi connected.");
                 last_debug_msg_time = ms_since_boot;
             }
-            // status=STATUS_NORMAL;
+            status = STATUS_NORMAL;
         }
-        vTaskDelay(1); // At lesat 1 tick delay to allow other tasks to run, if any
+        vTaskDelay(2); // At lesat 1 tick delay to allow other tasks to run, if any
     }
 }
 /****************************************************
@@ -192,7 +195,7 @@ int32_t status_blink(gpio_num_t led_pin, int status)
     uint64_t blink_time_on = 0;
     uint64_t blink_time_off = 0;
     static int blink_count = 0;
-    int blink_rate=1; // How many blinks per period time, default is 1
+    int blink_rate = 1; // How many blinks per period time, default is 1
     switch (status)
     {
     case STATUS_NORMAL:
@@ -285,14 +288,15 @@ int32_t status_blink(gpio_num_t led_pin, int status)
     case 4:
     {
         // wait period before next blink sequence
-        if ((ms_since_boot - last_blink_time) >= (BLINK_PERIOD - (2 * (blink_time_on) + blink_time_off)))
+        int64_t net_period = (BLINK_PERIOD - ((blink_rate * blink_time_on) + blink_time_off));
+        if ((ms_since_boot - last_blink_time) >= net_period)
         {
             last_blink_time = ms_since_boot;
             blink_state = 0;
             blink_count++;
         }
+        break;
     }
-    break;
     default:
     {
         blink_state = 0;
@@ -312,7 +316,7 @@ int32_t status_blink(gpio_num_t led_pin, int status)
    software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
    CONDITIONS OF ANY KIND, either express or implied.
 */
-/* 
+/*
 Set the Wifi SSID and Password in the following defines.
 */
 #define EXAMPLE_ESP_WIFI_SSID      "ESP32_TEST"
@@ -375,6 +379,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             ESP_LOGI(TAG_WIFI, "retry to connect to the AP");
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         }
         ESP_LOGI(TAG_WIFI, "connect to the AP fail");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -382,6 +387,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         ESP_LOGI(TAG_WIFI, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        xEventGroupClearBits(s_wifi_event_group, WIFI_FAIL_BIT);
     }
 }
 
@@ -434,29 +440,55 @@ void wifi_init_sta(void)
 
     ESP_LOGI(TAG_WIFI, "wifi_init_sta finished.");
 
-    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-            pdFALSE,
-            pdFALSE,
-            portMAX_DELAY);
+    // /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
+    //  * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
+    // EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+    //                                        WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+    //                                        pdFALSE,
+    //                                        pdFALSE,
+    //                                        portMAX_DELAY);
 
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG_WIFI, "connected to ap SSID:%s password:%s",
-                 EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(TAG_WIFI, "Failed to connect to SSID:%s, password:%s",
-                 EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
-    } else {
-        ESP_LOGE(TAG_WIFI, "UNEXPECTED EVENT");
-    }
+    // /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
+    //  * happened. */
+    // if (bits & WIFI_CONNECTED_BIT)
+    // {
+    //     ESP_LOGI(TAG_WIFI, "connected to ap SSID:%s password:%s",
+    //              EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
+    // }
+    // else if (bits & WIFI_FAIL_BIT)
+    // {
+    //     ESP_LOGI(TAG_WIFI, "Failed to connect to SSID:%s, password:%s",
+    //              EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
+    // }
+    // else
+    // {
+    //     ESP_LOGE(TAG_WIFI, "UNEXPECTED EVENT");
+    // }
 }
-
+/* Check for wifi connection status */
 int is_wifi_connected(void)
 {
     EventBits_t bits = xEventGroupGetBits(s_wifi_event_group);
-    return (bits & WIFI_CONNECTED_BIT) != 0;
+    int connection_status = ((bits & WIFI_CONNECTED_BIT) != 0) && ((bits & WIFI_FAIL_BIT) == 0);
+    return connection_status;
+}
+uint64_t last_reconnect_attempt_time = 0;
+int try_wifi_reconnect()
+{
+    uint64_t ms_since_boot = esp_timer_get_time() / 1000;
+    if (s_retry_num >= EXAMPLE_ESP_MAXIMUM_RETRY && ((ms_since_boot - last_reconnect_attempt_time) >= 20000)) // Retry every 20 seconds
+    {
+        s_retry_num = 0;
+        last_reconnect_attempt_time = ms_since_boot;
+        // esp_wifi_start();
+        if (esp_wifi_connect() == ESP_OK)
+        {
+            ESP_LOGI(TAG_WIFI, "[ReConnect]:Initiating WiFi reconnect...");
+        }
+        else
+        {
+            ESP_LOGE(TAG_WIFI, "[ReConnect]:WiFi reconnect initiation failed.");
+        }
+    }
+    return s_retry_num;
 }
