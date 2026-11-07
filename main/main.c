@@ -21,9 +21,9 @@
 #define DEVICE_BUTTON GPIO_NUM_21
 #define DEVICE_RELAY GPIO_NUM_22
 /* A status LED called Blink is used to incdicate device status*/
-#define STATUS_LED GPIO_NUM_23 
+#define STATUS_LED GPIO_NUM_23
 
-static const char *TAG = "geyser_controller";
+static const char *TAG = "MAIN_CTRL";
 /****************************************************
 ************** Declare Helper Functions***************
 ****************************************************/
@@ -83,6 +83,33 @@ void app_main(void)
     int status = STATUS_NORMAL;
     int error_blink_count = 0;
     uint64_t last_debug_msg_time = 0;
+
+    /* For now Define Hard Code Turn On/Off times*/
+    struct tm schedule_time_on = {
+        .tm_year = 2026 - 1900,
+        .tm_mon = 11 - 1,
+        .tm_mday = 7,
+        .tm_hour = 23,
+        .tm_min = 54,
+        .tm_sec = 15,
+        .tm_isdst = -1};
+
+    struct tm schedule_time_off = {
+        .tm_year = 2026 - 1900,
+        .tm_mon = 11 - 1,
+        .tm_mday = 7,
+        .tm_hour = 23,
+        .tm_min = 57,
+        .tm_sec = 15,
+        .tm_isdst = -1};
+    setenv("TZ", "PKT-5", 1);
+    tzset();
+    time_t turn_on_time = mktime(&schedule_time_on);
+    time_t turn_off_time = mktime(&schedule_time_off);
+    time_t current_time;
+    int schedule_started = 0;   // Flag to indicate if the schedule has started;
+    int schedule_completed = 0; // Flag to indicate if the schedule has completed;
+
     while (1)
     {
         // Blink the status LED
@@ -97,6 +124,7 @@ void app_main(void)
                 error_blink_count = 0;
             }
         }
+
         btn_current_state = gpio_get_level(DEVICE_BUTTON);
         if (btn_current_state == 0 && btn_last_state == 1)
         {
@@ -124,7 +152,6 @@ void app_main(void)
 
         if (btn_pressed == 1 && device_state == 0)
         {
-            ESP_LOGI(TAG, "Turning on the device.");
             if (ESP_OK == device_turn_on(DEVICE_RELAY))
             {
                 device_state = 1;
@@ -133,20 +160,48 @@ void app_main(void)
         }
         if (btn_pressed == 1 && device_state == 1)
         {
-            ESP_LOGI(TAG, "Turning off the device.");
             if (ESP_OK == device_turn_off(DEVICE_RELAY))
             {
                 device_state = 0;
             }
             btn_pressed = 0; // Reset button pressed state after handling
         }
+        if (schedule_started == 0)
+        {
+            // Check if it's time to turn on the device based on the schedule
+            time(&current_time);
+            if (current_time >= turn_on_time && device_state == 0)
+            {
+                ESP_LOGI(TAG, "Scheduled turn on time reached");
+                if (ESP_OK == device_turn_on(DEVICE_RELAY))
+                {
+                    schedule_started = 1;
+                    schedule_completed = 0;
+                    device_state = 1;
+                }
+            }
+        }
+        if (schedule_completed == 0)
+        {
+            // Check if it's time to turn off the device based on the schedule
+            time(&current_time);
+            if (current_time >= turn_off_time && device_state == 1)
+            {
+                ESP_LOGI(TAG, "Scheduled turn off time reached");
+                if (ESP_OK == device_turn_off(DEVICE_RELAY))
+                {
+                    device_state = 0;
+                    schedule_completed = 1;
+                }
+            }
+        }
         uint64_t ms_since_boot = esp_timer_get_time() / 1000;
         // detect wifi disconnect but let the Error State take precedence
         if (is_wifi_connected() == 0 && status != STATUS_ERROR)
         {
-            if (ms_since_boot - last_debug_msg_time >= 1000) // Log every 5 seconds
+            if (ms_since_boot - last_debug_msg_time >= 5000) // Log every 5 seconds
             {
-                ESP_LOGI(TAG, "WiFi connection lost.");
+                // ESP_LOGI(TAG, "WiFi connection lost.");
                 last_debug_msg_time = ms_since_boot;
                 try_wifi_reconnect();
             }
@@ -156,7 +211,20 @@ void app_main(void)
         {
             if (ms_since_boot - last_debug_msg_time >= 5000) // Log every 5 seconds
             {
-                ESP_LOGI(TAG, "WiFi connected.");
+                // ESP_LOGI(TAG, "WiFi connected.");
+                time(&current_time);
+                char strftime_buf_current[64];
+                char strftime_buf_on[64];
+
+                // Convert time_t to tm struct safely
+                struct tm timeinfo_current;
+                localtime_r(&current_time, &timeinfo_current);
+
+                // Format the time string (e.g., "YYYY-MM-DD HH:MM:SS")
+                strftime(strftime_buf_current, sizeof(strftime_buf_current), "%Y-%m-%d %H:%M:%S", &timeinfo_current);
+                strftime(strftime_buf_on, sizeof(strftime_buf_on), "%Y-%m-%d %H:%M:%S", &schedule_time_on);
+
+                ESP_LOGI(TAG, "Current time: %s,On TTime: %s", strftime_buf_current, strftime_buf_on);
                 last_debug_msg_time = ms_since_boot;
             }
             status = STATUS_NORMAL;

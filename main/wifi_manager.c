@@ -1,4 +1,5 @@
 #include "wifi_manager.h"
+#include "esp_netif_sntp.h"
 /**** Wifi API starts below */
 /* WiFi station Example Code Copy from github
 
@@ -17,10 +18,13 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
 
-static const char *TAG_WIFI = "wifi station";
+static const char *TAG_WIFI = "WiFi_CTRL";
 
 static int s_retry_num = 0;
-
+/****************************************
+************ Event Handlers *************
+*****************************************
+*/
 static void event_handler(void *arg, esp_event_base_t event_base,
                           int32_t event_id, void *event_data)
 {
@@ -48,8 +52,39 @@ static void event_handler(void *arg, esp_event_base_t event_base,
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG_WIFI, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
+        if (esp_netif_sntp_start() == ESP_OK)
+        {
+            ESP_LOGI(TAG_WIFI, "Timing Service Restart Succeeded");
+        }
+        else
+        {
+            ESP_LOGE(TAG_WIFI, "Timing Service Restart Failed");
+        }
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         xEventGroupClearBits(s_wifi_event_group, WIFI_FAIL_BIT);
+    }
+}
+
+static void sntp_evt_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    const esp_netif_sntp_time_sync_t *evt = (const esp_netif_sntp_time_sync_t *)data;
+    if (evt)
+    {
+        ESP_LOGI("**sntp***", "time synchronized: %ld.%06ld", (long)evt->tv.tv_sec, (long)evt->tv.tv_usec);
+        // Optionally convert to human-readable time using localtime_r() or gmtime_r()
+
+        time_t now;
+        char strftime_buf[64];
+        struct tm timeinfo;
+
+        time(&now);
+        // Set timezone to China Standard Time
+        setenv("TZ", "PKT-5", 1);
+        tzset();
+
+        localtime_r(&now, &timeinfo);
+        strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+        ESP_LOGI(TAG_WIFI, "The current date/time in Pakistan is: %s", strftime_buf);
     }
 }
 
@@ -77,6 +112,10 @@ void wifi_init_sta(void)
                                                         &event_handler,
                                                         NULL,
                                                         &instance_got_ip));
+    ESP_ERROR_CHECK(esp_event_handler_register(NETIF_SNTP_EVENT,
+                                               NETIF_SNTP_TIME_SYNC,
+                                               &sntp_evt_handler,
+                                               NULL));
 
     wifi_config_t wifi_config = {
         .sta = {
@@ -99,7 +138,9 @@ void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-
+    esp_sntp_config_t sntp_config =
+        ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    ESP_ERROR_CHECK(esp_netif_sntp_init(&sntp_config));
     ESP_LOGI(TAG_WIFI, "wifi_init_sta finished.");
 }
 /* Check for wifi connection status */
