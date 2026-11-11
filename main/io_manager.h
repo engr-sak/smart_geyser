@@ -81,4 +81,5 @@ esp_err_t device_turn_off(gpio_num_t device_no);
  */
 int32_t status_blink(gpio_num_t led_pin, int status);
 
+int get_device_status(void);
 #endif

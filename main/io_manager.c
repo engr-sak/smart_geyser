@@ -22,18 +22,25 @@ esp_err_t device_init(gpio_num_t DEVICE_NO)
     }
     return ESP_OK;
 }
+int device_status = 0;
 esp_err_t device_turn_on(gpio_num_t DEVICE_NO)
 {
     ESP_LOGI(TAG, "Turning on the device %d", DEVICE_NO);
+    device_status = 1;
     return gpio_set_level(DEVICE_NO, 1);
 }
 
 esp_err_t device_turn_off(gpio_num_t DEVICE_NO)
 {
     ESP_LOGI(TAG, "Turning off the device %d ", DEVICE_NO);
+    device_status = 0;
     return gpio_set_level(DEVICE_NO, 0);
 }
 
+int get_device_status()
+{
+    return device_status;
+}
 int32_t status_blink(gpio_num_t led_pin, int status)
 {
     // struct timeval tv;

@@ -7,7 +7,9 @@
 #include "esp_log.h"
 #include <time.h>
 #include <stdio.h>
-
+// include io_manager.h to access appliance_status and wifi_status
+#include "io_manager.h"
+#include "wifi_manager.h"
 static const char *TAG = "http_server";
 static esp_err_t hello_get_handler(httpd_req_t *req)
 {
@@ -23,8 +25,7 @@ static esp_err_t hello_get_handler(httpd_req_t *req)
         time_str,
         sizeof(time_str),
         "%Y-%m-%d %H:%M:%S",
-        &timeinfo
-    );
+        &timeinfo);
 
     char html_resp[1024];
     // char page_body1[]=
@@ -40,42 +41,104 @@ static esp_err_t hello_get_handler(httpd_req_t *req)
     //     "</body>"
     //     "</html>";
     char page_body[] =
-    "<!DOCTYPE html>"
-    "<html>"
-    "<head>"
+        "<!DOCTYPE html>"
+        "<html>"
+        "<head>"
         "<title>Smart Geyser</title>"
-    "</head>"
-    "<body>"
+        "</head>"
+        "<body>"
         "<h1>Smart Geyser Controller</h1>"
-        "<p>ESP32 is online.</p>"
-        "<p>ESP32 time: %s</p>"
-
-        "<p>Browser time: <span id='clock'>Loading...</span></p>"
+        "<p>Controller is online.</p>"
+        "<p>Controller time: <span id='esp32_time'>Loading...</span></p>"
+        "<p>Wifi status: <span id='wifi_status'>Loading...</span></p>"
+        "<p>Load Status: <span id='load_status'>Loading...</span></p>"
 
         "<script>"
-            "function updateClock() {"
-                "const now = new Date();"
 
-                "document.getElementById('clock').innerHTML = "
-                    "now.toLocaleTimeString();"
-            "}"
+        "async function updateEsp32Time() {"
 
-            "updateClock();"
-            "setInterval(updateClock, 1000);"
+        "try {"
+        "const response = await fetch('/api/status');"
+
+        "if (!response.ok) {"
+        "    throw new Error('HTTP error: ' + response.status);"
+        "}"
+
+        "const data = await response.json();"
+
+        "document.getElementById('esp32_time').textContent = "
+        "data.esp32_time;"
+
+        "document.getElementById('wifi_status').textContent ="
+        "data.wifi_status ? 'Connected' : 'Disconnected';"
+
+        "document.getElementById('load_status').textContent ="
+        "data.load_status ? 'ON' : 'OFF';"
+
+        "} catch (error) {"
+
+        "console.log('Error fetching ESP32 status:', error);"
+
+        "}"
+
+        "}"
+
+        "updateEsp32Time();"
+
+        "setInterval(updateEsp32Time, 5000);"
+
         "</script>"
 
-    "</body>"
-    "</html>";
-    
-    snprintf(
+        "</body>"
+        "</html>";
+
+    int bytes_written = snprintf(
         html_resp,
         sizeof(html_resp),
         page_body,
-        time_str
-    );
-
+        time_str);
+    if (bytes_written < 0 || bytes_written >= sizeof(html_resp))
+    {
+        ESP_LOGE(TAG, "ERROR: HTML status response truncated or error occurred while formatting.");
+    }
     httpd_resp_set_type(req, "text/html");
     httpd_resp_send(req, html_resp, HTTPD_RESP_USE_STRLEN);
+
+    return ESP_OK;
+}
+
+static esp_err_t status_get_handler(httpd_req_t *req)
+{
+    time_t now;
+    struct tm timeinfo;
+
+    time(&now);
+    localtime_r(&now, &timeinfo);
+
+    char time_str[32];
+
+    strftime(
+        time_str,
+        sizeof(time_str),
+        "%Y-%m-%d %H:%M:%S",
+        &timeinfo);
+
+    char json_resp[128];
+    int device_status = get_device_status();
+    int wifi_status = is_wifi_connected();
+    snprintf(
+        json_resp,
+        sizeof(json_resp),
+        "{"
+        "\"esp32_time\":\"%s\","
+        "\"load_status\":%d,"
+        "\"wifi_status\":%d"
+        "}",
+        time_str,
+        device_status,
+        wifi_status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json_resp, HTTPD_RESP_USE_STRLEN);
 
     return ESP_OK;
 }
@@ -92,12 +155,17 @@ void http_server_start(void)
         .uri = "/",
         .method = HTTP_GET,
         .handler = hello_get_handler,
-        .user_ctx = NULL
-    };
+        .user_ctx = NULL};
 
     ESP_ERROR_CHECK(
-        httpd_register_uri_handler(server, &hello_uri)
-    );
+        httpd_register_uri_handler(server, &hello_uri));
+    httpd_uri_t status_uri = {
+        .uri = "/api/status",
+        .method = HTTP_GET,
+        .handler = status_get_handler,
+        .user_ctx = NULL};
 
+    ESP_ERROR_CHECK(
+        httpd_register_uri_handler(server, &status_uri));
     ESP_LOGI(TAG, "HTTP server started");
 }
