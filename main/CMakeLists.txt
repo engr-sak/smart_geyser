@@ -3,6 +3,7 @@ idf_component_register(
         "main.c"
         "io_manager.c"
         "wifi_manager.c"
+        "http_server.c"
 
     INCLUDE_DIRS "."
 
@@ -12,4 +13,5 @@ idf_component_register(
         esp_driver_gpio
         esp_timer
         esp_netif
+        esp_http_server
 )

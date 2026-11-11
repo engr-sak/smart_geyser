@@ -14,6 +14,8 @@
 #include "io_manager.h"
 // Wifi includes
 #include "wifi_manager.h"
+// http server includes
+#include "http_server.h"
 /****************************************************
 ********** Define Constants For whole program **********
 ****************************************************/
@@ -74,6 +76,7 @@ void app_main(void)
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
     ESP_LOGI(TAG, "WiFi initialization complete.");
+    http_server_start();
     int device_state = 0;      // 0 for off, 1 for on
     int btn_current_state = 1; // Assuming button is not pressed initially (active low)
     int btn_last_state = 1;    // Last state of the button
@@ -83,29 +86,40 @@ void app_main(void)
     int status = STATUS_NORMAL;
     int error_blink_count = 0;
     uint64_t last_debug_msg_time = 0;
-
+    uint64_t last_debug_msg2_time = 0;
     /* For now Define Hard Code Turn On/Off times*/
+
+    struct tm sys_ref_timepoint = {
+        .tm_year = 2026 - 1900,
+        .tm_mon = 11 - 1,
+        .tm_mday = 11,
+        .tm_hour = 00,
+        .tm_min = 00,
+        .tm_sec = 00,
+        .tm_isdst = -1};
+
     struct tm schedule_time_on = {
         .tm_year = 2026 - 1900,
         .tm_mon = 11 - 1,
         .tm_mday = 7,
         .tm_hour = 23,
-        .tm_min = 54,
+        .tm_min = 59,
         .tm_sec = 15,
         .tm_isdst = -1};
 
     struct tm schedule_time_off = {
         .tm_year = 2026 - 1900,
         .tm_mon = 11 - 1,
-        .tm_mday = 7,
-        .tm_hour = 23,
-        .tm_min = 57,
+        .tm_mday = 8,
+        .tm_hour = 00,
+        .tm_min = 03,
         .tm_sec = 15,
         .tm_isdst = -1};
     setenv("TZ", "PKT-5", 1);
     tzset();
     time_t turn_on_time = mktime(&schedule_time_on);
     time_t turn_off_time = mktime(&schedule_time_off);
+    time_t ref_time_point = mktime(&sys_ref_timepoint);
     time_t current_time;
     int schedule_started = 0;   // Flag to indicate if the schedule has started;
     int schedule_completed = 0; // Flag to indicate if the schedule has completed;
@@ -221,13 +235,25 @@ void app_main(void)
                 localtime_r(&current_time, &timeinfo_current);
 
                 // Format the time string (e.g., "YYYY-MM-DD HH:MM:SS")
-                strftime(strftime_buf_current, sizeof(strftime_buf_current), "%Y-%m-%d %H:%M:%S", &timeinfo_current);
-                strftime(strftime_buf_on, sizeof(strftime_buf_on), "%Y-%m-%d %H:%M:%S", &schedule_time_on);
+                // strftime(strftime_buf_current, sizeof(strftime_buf_current), "%Y-%m-%d %H:%M:%S", &timeinfo_current);
+                // strftime(strftime_buf_on, sizeof(strftime_buf_on), "%Y-%m-%d %H:%M:%S", &schedule_time_on);
 
-                ESP_LOGI(TAG, "Current time: %s,On TTime: %s", strftime_buf_current, strftime_buf_on);
+                // ESP_LOGI(TAG, "Current time: %s,On TTime: %s", strftime_buf_current, strftime_buf_on);
                 last_debug_msg_time = ms_since_boot;
             }
             status = STATUS_NORMAL;
+        }
+
+        if (ms_since_boot - last_debug_msg2_time >= 60000) // Log every 1 minute
+        {
+            time(&current_time);
+            if (current_time < ref_time_point)
+            {
+                ESP_LOGI(TAG, "Warning:System time is not set. Current time: %s", ctime(&current_time));
+                // status = STATUS_ERROR;
+            }
+            // status = STATUS_NORMAL;
+            last_debug_msg2_time = ms_since_boot;
         }
         vTaskDelay(2); // At lesat 1 tick delay to allow other tasks to run, if any
     }
