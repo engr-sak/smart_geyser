@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Smart Geyser</title>
+</head>
+
+<body>
+
+    <h1>Smart Geyser Controller</h1>
+
+    <p>
+        Controller time:
+        <span id="esp32_time">Loading...</span>
+    </p>
+
+    <p>
+        Wifi status:
+        <span id="wifi_status">Loading...</span>
+    </p>
+
+    <p>
+        Load Status:
+        <span id="load_status">Loading...</span>
+    </p>
+
+    <h2>Manual Control</h2>
+
+    <button onclick="controlGeyser(true)">
+        Turn ON
+    </button>
+
+    <button onclick="controlGeyser(false)">
+        Turn OFF
+    </button>
+
+    <p id="command_result"></p>
+
+    <script src="scripts.js"></script>
+
+</body>
+
+</html>
