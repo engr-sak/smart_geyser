@@ -31,7 +31,7 @@ async function controlGeyser(cmd) {
 
     try {
 
-        const response = await fetch('/api/geyser', {
+        const response = await fetch('/api/control', {
             method: 'POST',
 
             headers: {

@@ -4,6 +4,7 @@ idf_component_register(
         "io_manager.c"
         "wifi_manager.c"
         "http_server.c"
+        "filesystem.c"
 
     INCLUDE_DIRS "."
 
@@ -14,4 +15,10 @@ idf_component_register(
         esp_timer
         esp_netif
         esp_http_server
+        spiffs
+)
+spiffs_create_partition_image(
+    web_storage
+    "../web_ui"
+    FLASH_IN_PROJECT
 )

@@ -16,6 +16,8 @@
 #include "wifi_manager.h"
 // http server includes
 #include "http_server.h"
+// File system includes
+#include "filesystem.h"
 /****************************************************
 ********** Define Constants For whole program **********
 ****************************************************/
@@ -76,6 +78,9 @@ void app_main(void)
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
     ESP_LOGI(TAG, "WiFi initialization complete.");
+    ESP_LOGI(TAG, "Mounting File System.");
+    ESP_ERROR_CHECK(filesystem_init());
+    ESP_LOGI(TAG, "Starting server.");
     http_server_start();
     int device_state = 0;      // 0 for off, 1 for on
     int btn_current_state = 1; // Assuming button is not pressed initially (active low)

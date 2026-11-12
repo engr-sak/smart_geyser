@@ -14,134 +14,76 @@
 // include io_manager.h to access appliance_status and wifi_status
 #include "io_manager.h"
 #include "wifi_manager.h"
+// filesystem includes
+// #include "filesystem.h"
+#include <sys/stat.h>
 static const char *TAG = "http_server";
-static esp_err_t hello_get_handler(httpd_req_t *req)
+// Handler for serving the HTML page
+static esp_err_t send_file(
+    httpd_req_t *req,
+    const char *filepath,
+    const char *content_type)
 {
-    time_t now;
-    struct tm timeinfo;
+    FILE *file = fopen(filepath, "r");
 
-    time(&now);
-    localtime_r(&now, &timeinfo);
+    if (file == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to open file: %s", filepath);
 
-    char time_str[32];
+        httpd_resp_send_err(
+            req,
+            HTTPD_404_NOT_FOUND,
+            "File not found");
 
-    strftime(
-        time_str,
-        sizeof(time_str),
-        "%Y-%m-%d %H:%M:%S",
-        &timeinfo);
+        return ESP_FAIL;
+    }
 
-    char page_body[] =
-        "<!DOCTYPE html>"
-        "<html>"
-        "<head>"
-        "<title>Smart Geyser</title>"
-        "</head>"
-        "<body>"
+    httpd_resp_set_type(req, content_type);
 
-        "<h1>Smart Geyser Controller</h1>"
+    char buffer[1024];
+    size_t bytes_read;
 
-        "<p>Controller time: "
-        "<span id='esp32_time'>Loading...</span>"
-        "</p>"
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0)
+    {
+        if (httpd_resp_send_chunk(req, buffer, bytes_read) != ESP_OK)
+        {
+            fclose(file);
+            return ESP_FAIL;
+        }
+    }
 
-        "<p>Wifi status: "
-        "<span id='wifi_status'>Loading...</span>"
-        "</p>"
+    fclose(file);
 
-        "<p>Load Status: "
-        "<span id='load_status'>Loading...</span>"
-        "</p>"
-
-        "<h2>Manual Control</h2>"
-
-        "<button onclick='controlGeyser(true)'>Turn ON</button>"
-        "<button onclick='controlGeyser(false)'>Turn OFF</button>"
-
-        "<p id='command_result'></p>"
-
-        "<script>"
-
-        "async function updateEsp32Time() {"
-
-        "    try {"
-
-        "        const response = await fetch('/api/status');"
-
-        "        if (!response.ok) {"
-        "            throw new Error('HTTP error: ' + response.status);"
-        "        }"
-
-        "        const data = await response.json();"
-
-        "        document.getElementById('esp32_time').textContent ="
-        "            data.esp32_time;"
-
-        "        document.getElementById('wifi_status').textContent ="
-        "            data.wifi_status ? 'Connected' : 'Disconnected';"
-
-        "        document.getElementById('load_status').textContent ="
-        "            data.load_status ? 'ON' : 'OFF';"
-
-        "    } catch (error) {"
-
-        "        console.log('Error fetching ESP32 status:', error);"
-
-        "    }"
-
-        "}"
-
-        "async function controlGeyser(cmd) {"
-
-        "    try {"
-
-        "        const response = await fetch('/api/control', {"
-        "            method: 'POST',"
-        "            headers: {"
-        "                'Content-Type': 'application/json'"
-        "            },"
-        "            body: JSON.stringify({"
-        "                state: cmd"
-        "            })"
-        "        });"
-
-        "        if (!response.ok) {"
-        "            throw new Error('HTTP error: ' + response.status);"
-        "        }"
-
-        "        const data = await response.json();"
-
-        "        document.getElementById('command_result').textContent ="
-        "            data.message;"
-
-        "        updateEsp32Time();"
-
-        "    } catch (error) {"
-
-        "        document.getElementById('command_result').textContent ="
-        "            'Command failed: ' + error.message;"
-
-        "        console.log('Geyser command error:', error);"
-
-        "    }"
-
-        "}"
-
-        "updateEsp32Time();"
-
-        "setInterval(updateEsp32Time, 5000);"
-
-        "</script>"
-
-        "</body>"
-        "</html>";
-
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, page_body, HTTPD_RESP_USE_STRLEN);
+    // Signal that the HTTP response is complete
+    httpd_resp_send_chunk(req, NULL, 0);
 
     return ESP_OK;
 }
+static esp_err_t display_ui_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "Serving index.html");
+    return send_file(
+        req,
+        "/spiffs/index.html",
+        "text/html");
+}
+static esp_err_t javascript_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "Serving scripts.js");
+    return send_file(
+        req,
+        "/spiffs/scripts.js",
+        "application/javascript");
+}
 
+static esp_err_t css_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "Serving style.css");
+    return send_file(
+        req,
+        "/spiffs/style.css",
+        "text/css");
+}
 static esp_err_t status_get_handler(httpd_req_t *req)
 {
     time_t now;
@@ -283,31 +225,49 @@ void http_server_start(void)
 
     ESP_ERROR_CHECK(httpd_start(&server, &config));
     // Serve Page
-    httpd_uri_t hello_uri = {
+    httpd_uri_t display_ui_uri = {
         .uri = "/",
         .method = HTTP_GET,
-        .handler = hello_get_handler,
+        .handler = display_ui_handler,
         .user_ctx = NULL};
-
     ESP_ERROR_CHECK(
-        httpd_register_uri_handler(server, &hello_uri));
+        httpd_register_uri_handler(server, &display_ui_uri));
+
+    // Serve JavaScript
+    httpd_uri_t javascript_uri = {
+        .uri = "/scripts.js",
+        .method = HTTP_GET,
+        .handler = javascript_handler,
+        .user_ctx = NULL};
+    ESP_ERROR_CHECK(
+        httpd_register_uri_handler(server, &javascript_uri));
+
+    // Serve CSS
+    httpd_uri_t css_uri = {
+        .uri = "/style.css",
+        .method = HTTP_GET,
+        .handler = css_handler,
+        .user_ctx = NULL};
+    ESP_ERROR_CHECK(
+        httpd_register_uri_handler(server, &css_uri));
+
     // Server controller status API
     httpd_uri_t status_uri = {
         .uri = "/api/status",
         .method = HTTP_GET,
         .handler = status_get_handler,
         .user_ctx = NULL};
-
     ESP_ERROR_CHECK(
         httpd_register_uri_handler(server, &status_uri));
+
     // Server controller command API
     httpd_uri_t control_uri = {
         .uri = "/api/control",
         .method = HTTP_POST,
         .handler = geyser_post_handler,
         .user_ctx = NULL};
-
     ESP_ERROR_CHECK(
         httpd_register_uri_handler(server, &control_uri));
+
     ESP_LOGI(TAG, "HTTP server started");
 }
